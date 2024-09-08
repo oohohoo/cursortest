@@ -196,8 +196,20 @@ function editBreakpointWidth(breakpointKey) {
 function loadLayoutsFromStorage() {
     const savedLayouts = localStorage.getItem('gridLayouts');
     if (savedLayouts) {
-        layouts = JSON.parse(savedLayouts); // Load layouts from local storage
-        updateLayoutThumbnails(); // Update the UI with loaded layouts
+        layouts = JSON.parse(savedLayouts);
+        // Convert old format to new format if necessary
+        Object.keys(layouts).forEach(name => {
+            if (!layouts[name].pages) {
+                layouts[name] = {
+                    pages: [{
+                        id: 'page1',
+                        name: 'Page 1',
+                        sections: layouts[name]
+                    }]
+                };
+            }
+        });
+        updateLayoutThumbnails();
     }
 }
 
@@ -222,44 +234,23 @@ function updateLayoutThumbnails() {
         const previewElement = document.createElement('div');
         previewElement.classList.add('layout-preview');
 
-        layout.forEach(section => {
-            const sectionPreview = document.createElement('div');
-            sectionPreview.classList.add('section-preview');
-            sectionPreview.style.display = 'grid';
-            sectionPreview.style.gridTemplateColumns = section.columnSize;
-            sectionPreview.style.gridTemplateRows = section.rowSize;
-            sectionPreview.style.gap = section.gap;
-            sectionPreview.style.margin = '2px 0';
+        if (layout.pages && Array.isArray(layout.pages)) {
+            layout.pages.forEach((page, pageIndex) => {
+                const pagePreview = document.createElement('div');
+                pagePreview.classList.add('page-preview');
+                pagePreview.textContent = `Page ${pageIndex + 1}: ${page.name}`;
+                previewElement.appendChild(pagePreview);
 
-            // Add cells to represent the grid
-            for (let i = 0; i < section.rows; i++) {
-                for (let j = 0; j < section.columns; j++) {
-                    const cell = document.createElement('div');
-                    cell.classList.add('preview-cell');
-                    cell.style.gridColumn = `${j + 1}`;
-                    cell.style.gridRow = `${i + 1}`;
-                    sectionPreview.appendChild(cell);
+                if (page.sections && Array.isArray(page.sections)) {
+                    page.sections.forEach(section => {
+                        const sectionPreview = createSectionPreview(section);
+                        previewElement.appendChild(sectionPreview);
+                    });
                 }
-            }
-
-            // Add named areas
-            Object.values(section.areas).forEach(breakpointAreas => {
-                breakpointAreas.forEach(area => {
-                    const areaElement = document.createElement('div');
-                    areaElement.classList.add('preview-area');
-                    areaElement.style.gridColumnStart = area.startColumn;
-                    areaElement.style.gridColumnEnd = area.endColumn + 1;
-                    areaElement.style.gridRowStart = area.startRow;
-                    areaElement.style.gridRowEnd = area.endRow + 1;
-                    areaElement.style.backgroundColor = area.color || getRandomColor();
-                    areaElement.style.opacity = '0.7';
-                    areaElement.textContent = area.name;
-                    sectionPreview.appendChild(areaElement);
-                });
             });
-
-            previewElement.appendChild(sectionPreview);
-        });
+        } else {
+            console.warn(`Layout "${name}" has an invalid structure`);
+        }
 
         thumbnail.appendChild(previewElement);
 
@@ -280,15 +271,71 @@ function updateLayoutThumbnails() {
     });
 }
 
+// Helper function to create section preview
+function createSectionPreview(section) {
+    const sectionPreview = document.createElement('div');
+    sectionPreview.classList.add('section-preview');
+    sectionPreview.style.display = 'grid';
+    sectionPreview.style.gridTemplateColumns = section.columnSize;
+    sectionPreview.style.gridTemplateRows = section.rowSize;
+    sectionPreview.style.gap = section.gap;
+    sectionPreview.style.margin = '2px 0';
+
+    // Add cells to represent the grid
+    for (let i = 0; i < section.rows; i++) {
+        for (let j = 0; j < section.columns; j++) {
+            const cell = document.createElement('div');
+            cell.classList.add('preview-cell');
+            cell.style.gridColumn = `${j + 1}`;
+            cell.style.gridRow = `${i + 1}`;
+            sectionPreview.appendChild(cell);
+        }
+    }
+
+    // Add named areas
+    Object.values(section.areas).forEach(breakpointAreas => {
+        breakpointAreas.forEach(area => {
+            const areaElement = document.createElement('div');
+            areaElement.classList.add('preview-area');
+            areaElement.style.gridColumnStart = area.startColumn;
+            areaElement.style.gridColumnEnd = area.endColumn + 1;
+            areaElement.style.gridRowStart = area.startRow;
+            areaElement.style.gridRowEnd = area.endRow + 1;
+            areaElement.style.backgroundColor = area.color || getRandomColor();
+            areaElement.style.opacity = '0.7';
+            areaElement.textContent = area.name;
+            sectionPreview.appendChild(areaElement);
+        });
+    });
+
+    return sectionPreview;
+}
+
 // Create a new layout
 function createNewLayout() {
-    currentPage.sections = []; // Clear existing sections
+    // Reset all pages
+    pages = [{ id: 'page1', name: 'Page 1', sections: [] }];
+    currentPage = pages[0];
+    
+    // Clear the sections container
     sectionsContainer.innerHTML = '';
-    createInitialSection(); // Create the initial section
-    saveLayoutsToLocalStorage(); // Save the new layout
-    localStorage.removeItem('currentGridState'); // Clear the current state
-    saveCurrentState(); // Save the new initial state
-    updateSidebarControls(currentPage.sections[0]); // Update sidebar controls with the new section
+    
+    // Create the initial section for the default page
+    createInitialSection();
+    
+    // Update the UI
+    updateTabs();
+    renderCurrentPage();
+    
+    // Save the new initial state
+    saveLayoutsToLocalStorage();
+    localStorage.removeItem('currentGridState');
+    saveCurrentState();
+    
+    // Update sidebar controls with the new section
+    if (currentPage.sections.length > 0) {
+        updateSidebarControls(currentPage.sections[0]);
+    }
 }
 
 // Save the current layout
@@ -300,15 +347,21 @@ function saveLayout() {
                 return;
             }
         }
-        layouts[name] = currentPage.sections.map(section => ({
-            name: section.name,
-            columns: section.columns,
-            rows: section.rows,
-            columnSize: section.columnSize,
-            rowSize: section.rowSize,
-            gap: section.gap,
-            areas: section.areas
-        }));
+        layouts[name] = {
+            pages: pages.map(page => ({
+                id: page.id,
+                name: page.name,
+                sections: page.sections.map(section => ({
+                    name: section.name,
+                    columns: section.columns,
+                    rows: section.rows,
+                    columnSize: section.columnSize,
+                    rowSize: section.rowSize,
+                    gap: section.gap,
+                    areas: section.areas
+                }))
+            }))
+        };
         saveLayoutsToLocalStorage();
         updateLayoutThumbnails();
         layoutName.value = '';
@@ -317,14 +370,46 @@ function saveLayout() {
     }
 }
 
-
-
-
-
-
-
-
-
+// Load a layout
+function loadLayout(name) {
+    if (layouts[name]) {
+        try {
+            const layoutData = layouts[name];
+            if (layoutData.pages) {
+                pages = layoutData.pages.map(pageData => ({
+                    id: pageData.id,
+                    name: pageData.name,
+                    sections: pageData.sections.map(sectionData => {
+                        const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
+                        section.areas = sectionData.areas || {};
+                        return section;
+                    })
+                }));
+            } else {
+                // Handle old format
+                pages = [{
+                    id: 'page1',
+                    name: 'Page 1',
+                    sections: layoutData.map(sectionData => {
+                        const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
+                        section.areas = sectionData.areas || {};
+                        return section;
+                    })
+                }];
+            }
+            currentPage = pages[0];
+            updateTabs();
+            renderCurrentPage();
+            updateCSS();
+        } catch (error) {
+            console.error(`Error loading layout "${name}":`, error);
+            alert(`An error occurred while loading the layout. Please try again or contact support if the problem persists.`);
+        }
+    } else {
+        console.error(`Layout "${name}" not found`);
+        alert(`Layout "${name}" not found. Please check the layout name and try again.`);
+    }
+}
 
 // Initialize the application
 function init() {
@@ -1336,36 +1421,6 @@ function deleteLayout(name) {
     }
 }
 
-// Load a saved layout
-function loadLayout(name) {
-    if (layouts[name]) {
-        try {
-            currentPage.sections = JSON.parse(JSON.stringify(layouts[name]));
-            sectionsContainer.innerHTML = '';
-            currentPage.sections = currentPage.sections.map(sectionData => {
-                const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
-                section.areas = sectionData.areas || {};
-                sectionsContainer.appendChild(section.element);
-                createVisualGrid(section);
-                renderAreas(section);
-                return section;
-            });
-            if (currentPage.sections.length > 0) {
-                selectSection(currentPage.sections[0]);
-            } else {
-                console.warn("No sections found in the loaded layout");
-            }
-            updateCSS();
-        } catch (error) {
-            console.error(`Error loading layout "${name}":`, error);
-            alert(`An error occurred while loading the layout. Please try again or contact support if the problem persists.`);
-        }
-    } else {
-        console.error(`Layout "${name}" not found`);
-        alert(`Layout "${name}" not found. Please check the layout name and try again.`);
-    }
-}
-
 // Toggle between light and dark themes
 function toggleTheme() {
     document.body.classList.toggle('dark-theme');
@@ -2061,13 +2116,29 @@ function updateUndoRedoButtons() {
 }
 
 function createNewLayout() {
-    currentPage.sections = []; // Clear existing sections
+    // Reset all pages
+    pages = [{ id: 'page1', name: 'Page 1', sections: [] }];
+    currentPage = pages[0];
+    
+    // Clear the sections container
     sectionsContainer.innerHTML = '';
-    createInitialSection(); // Create the initial section
-    saveLayoutsToLocalStorage(); // Save the new layout
-    localStorage.removeItem('currentGridState'); // Clear the current state
-    saveCurrentState(); // Save the new initial state
-    updateSidebarControls(currentPage.sections[0]); // Update sidebar controls with the new section
+    
+    // Create the initial section for the default page
+    createInitialSection();
+    
+    // Update the UI
+    updateTabs();
+    renderCurrentPage();
+    
+    // Save the new initial state
+    saveLayoutsToLocalStorage();
+    localStorage.removeItem('currentGridState');
+    saveCurrentState();
+    
+    // Update sidebar controls with the new section
+    if (currentPage.sections.length > 0) {
+        updateSidebarControls(currentPage.sections[0]);
+    }
 }
 
 // Add custom breakpoint

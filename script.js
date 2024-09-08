@@ -1,7 +1,9 @@
 // Global variables
 let customBreakpoints = {};
-let sections = [];
-let layouts = {}; // Store layouts in an object
+let pages = [
+    { id: 'page1', name: 'Page 1', sections: [] }
+];
+let currentPage = pages[0];
 let dragStartCell = null;
 let dragEndCell = null;
 let isResizing = false;
@@ -10,7 +12,7 @@ let selectedArea = null;
 let selectedSection = null;
 let historyStack = [];
 let historyIndex = -1;
-let currentBreakpoint = 'laptop'; // Set initial breakpoint to 'laptop'
+let currentBreakpoint = 'desktop-large'; // Set initial breakpoint to 'desktop-large'
 const MAX_HISTORY = 50; 
 
 // DOM elements
@@ -38,11 +40,12 @@ const breakpointProperties = {};
 
 // Add this at the beginning of your script
 const breakpoints = {
+    'desktop-large': { name: 'Desktop Large', width: 1920 },
+    'desktop': { name: 'Desktop', width: 1440 },
     'laptop': { name: 'Laptop', width: 1024 },
+    'tablet-landscape': { name: 'Tablet Landscape', width: 991 },
     'tablet': { name: 'Tablet', width: 768 },
-    'mobile-l': { name: 'Mobile L', width: 425 },
-    'mobile-m': { name: 'Mobile M', width: 375 },
-    'mobile-s': { name: 'Mobile S', width: 320 }
+    'mobile': { name: 'Mobile', width: 600 }
 };
 
 // Add this function to update breakpoint values
@@ -67,6 +70,7 @@ function getBreakpointWidth(breakpoint) {
 
 // Update the changeBreakpoint function
 function changeBreakpoint(breakpoint) {
+    const oldBreakpoint = currentBreakpoint;
     currentBreakpoint = breakpoint;
     
     const gridContainer = document.querySelector('.grid-container');
@@ -79,6 +83,9 @@ function changeBreakpoint(breakpoint) {
     
     const width = getBreakpointWidth(breakpoint);
     
+    // Add transition class
+    gridContainer.classList.add('transitioning');
+    
     if (width === 'flex-grow') {
         gridContainer.style.width = '100%';
         gridContainer.style.maxWidth = '100%';
@@ -87,15 +94,50 @@ function changeBreakpoint(breakpoint) {
         gridContainer.style.maxWidth = width;
     }
     
-    // ... rest of the function remains the same
+    // Update areas for each section
+    currentPage.sections.forEach(section => {
+        if (!section.gridProperties[breakpoint]) {
+            const defaultProps = getDefaultProperties(breakpoint);
+            section.gridProperties[breakpoint] = {
+                columns: defaultProps.columns,
+                rows: defaultProps.rows,
+                gap: defaultProps.gap,
+                columnSize: `repeat(${defaultProps.columns}, 1fr)`,
+                rowSize: `repeat(${defaultProps.rows}, 1fr)`
+            };
+        }
+        if (!section.areas[breakpoint]) {
+            section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
+        }
+        updateSectionForBreakpoint(section, breakpoint);
+        updateSectionGrid(section);
+        renderAreas(section);
+    });
+    
+    if (selectedSection) {
+        updateSidebarControls(selectedSection);
+    }
+    
+    // Remove transition class after animation completes
+    setTimeout(() => {
+        gridContainer.classList.remove('transitioning');
+    }, 300);
+    
+    updateCSS();
+    
+    // Trigger a custom event for breakpoint change
+    const event = new CustomEvent('breakpointChanged', { 
+        detail: { oldBreakpoint, newBreakpoint: breakpoint } 
+    });
+    document.dispatchEvent(event);
 }
 
-// Add this function to update breakpoint buttons
+// Update the updateBreakpointButtons function
 function updateBreakpointButtons() {
     const breakpointContainer = document.querySelector('.breakpoints');
     breakpointContainer.innerHTML = '';
     
-    Object.keys(breakpoints).forEach(key => {
+    Object.keys(breakpoints).reverse().forEach(key => {
         const btnContainer = document.createElement('div');
         btnContainer.classList.add('breakpoint-btn-container');
 
@@ -240,26 +282,32 @@ function updateLayoutThumbnails() {
 
 // Create a new layout
 function createNewLayout() {
-    sections = []; // Clear existing sections
+    currentPage.sections = []; // Clear existing sections
     sectionsContainer.innerHTML = '';
     createInitialSection(); // Create the initial section
     saveLayoutsToLocalStorage(); // Save the new layout
     localStorage.removeItem('currentGridState'); // Clear the current state
     saveCurrentState(); // Save the new initial state
+    updateSidebarControls(currentPage.sections[0]); // Update sidebar controls with the new section
 }
 
 // Save the current layout
 function saveLayout() {
     const name = layoutName.value.trim();
     if (name) {
-        layouts[name] = sections.map(section => ({
+        if (layouts[name]) {
+            if (!confirm(`A layout with the name "${name}" already exists. Do you want to overwrite it?`)) {
+                return;
+            }
+        }
+        layouts[name] = currentPage.sections.map(section => ({
             name: section.name,
             columns: section.columns,
             rows: section.rows,
             columnSize: section.columnSize,
             rowSize: section.rowSize,
             gap: section.gap,
-            areas: section.areas // Save the entire areas object
+            areas: section.areas
         }));
         saveLayoutsToLocalStorage();
         updateLayoutThumbnails();
@@ -269,9 +317,19 @@ function saveLayout() {
     }
 }
 
+
+
+
+
+
+
+
+
+
 // Initialize the application
 function init() {
-    if (!loadCurrentState()) {
+    loadCurrentState();
+    if (currentPage.sections.length === 0) {
         createInitialSection();
     }
     loadLayoutsFromStorage();
@@ -279,6 +337,7 @@ function init() {
     updateCSS();
     
     updateBreakpointButtons();
+    updateTabs(); // Make sure this line is here
     
     document.getElementById('new-layout-btn').addEventListener('click', createNewLayout);
     if (undoBtn) undoBtn.addEventListener('click', undo);
@@ -291,41 +350,38 @@ function init() {
     changeBreakpoint(currentBreakpoint);
     
     // Update grid preview for each section
-    sections.forEach(section => {
+    currentPage.sections.forEach(section => {
         createVisualGrid(section);
         renderAreas(section);
     });
     
     // Render the loaded or initial state
-    sectionsContainer.innerHTML = '';
-    sections.forEach(section => {
-        sectionsContainer.appendChild(section.element);
-        createVisualGrid(section);
-        renderAreas(section);
-    });
-    if (sections.length > 0) {
-        selectSection(sections[0]);
+    renderCurrentPage();
+    if (currentPage.sections.length > 0) {
+        selectSection(currentPage.sections[0]);
     }
 }
 
 // Create the initial grid section
 function createInitialSection() {
     // Clear existing sections
-    sections = [];
+    currentPage.sections = [];
     const container = document.getElementById('sections-container');
     container.innerHTML = '';
 
-    const initialColumns = 12;
-    const initialRows = 6;
-    const initialColumnSize = Array(initialColumns).fill('1fr').join(' ');
-    const initialRowSize = Array(initialRows).fill('1fr').join(' ');
+    const defaultProps = getDefaultProperties('desktop-large');
+    const initialColumns = defaultProps.columns;
+    const initialRows = defaultProps.rows;
+    const initialColumnSize = `repeat(${initialColumns}, 1fr)`;
+    const initialRowSize = `repeat(${initialRows}, 1fr)`;
     
-    const initialGap = '1rem'; // Set default gap
+    const initialGap = defaultProps.gap;
     const initialSection = createSection('Section 1', initialColumns, initialRows, initialColumnSize, initialRowSize, initialGap);
-    sections.push(initialSection);
+    currentPage.sections.push(initialSection);
     container.appendChild(initialSection.element);
     selectSection(initialSection);
     updateCSS();
+    updateSidebarControls(initialSection); // Add this line
 }
 
 function createSection(name, columns, rows, columnSize, rowSize, gap) {
@@ -358,32 +414,29 @@ function createSection(name, columns, rows, columnSize, rowSize, gap) {
         name,
         columns,
         rows,
-        columnSize: columnSize || Array(columns).fill('1fr').join(' '),
-        rowSize: rowSize || Array(rows).fill('1fr').join(' '),
-        gap: gap || '1rem', // Ensure a default gap is set
+        columnSize: columnSize || `repeat(${columns}, 1fr)`,
+        rowSize: rowSize || `repeat(${rows}, 1fr)`,
+        gap: gap || '1rem',
         areas: {},
         currentBreakpoint: 'default',
-        gridProperties: {
-            'default': {
-                columns,
-                rows,
-                gap: gap || '1rem', // Set default gap here too
-                columnSize: columnSize || Array(columns).fill('1fr').join(' '),
-                rowSize: rowSize || Array(rows).fill('1fr').join(' ')
-            }
-        }
+        gridProperties: {}
     };
 
     // Initialize grid properties for all breakpoints
     Object.keys(breakpoints).forEach(bp => {
-        const bpColumns = getDefaultColumns(bp);
+        const defaultProps = getDefaultProperties(bp);
         section.gridProperties[bp] = {
-            columns: bpColumns,
-            rows,
-            gap,
-            columnSize: `repeat(${bpColumns}, 1fr)`,
-            rowSize
+            columns: defaultProps.columns,
+            rows: defaultProps.rows,
+            gap: '1rem',
+            columnSize: `repeat(${defaultProps.columns}, 1fr)`,
+            rowSize: `repeat(${defaultProps.rows}, 1fr)`
         };
+    });
+
+    // Initialize areas for all breakpoints
+    Object.keys(breakpoints).forEach(bp => {
+        section.areas[bp] = [];
     });
 
     deleteBtn.addEventListener('click', () => deleteSection(section));
@@ -414,6 +467,24 @@ function createSection(name, columns, rows, columnSize, rowSize, gap) {
     });
 
     return section;
+}
+
+function getDefaultProperties(breakpoint) {
+    switch (breakpoint) {
+        case 'desktop-large':
+        case 'desktop':
+            return { columns: 12, rows: 6, gap: '1rem' };
+        case 'laptop':
+            return { columns: 8, rows: 6, gap: '1rem' };
+        case 'tablet-landscape':
+            return { columns: 6, rows: 6, gap: '1rem' };
+        case 'tablet':
+            return { columns: 4, rows: 6, gap: '1rem' };
+        case 'mobile':
+            return { columns: 2, rows: 6, gap: '1rem' };
+        default:
+            return { columns: 12, rows: 6, gap: '1rem' };
+    }
 }
 
 function deleteArea(section, areaElement) {
@@ -575,7 +646,7 @@ function selectSection(section, clickEvent = null) {
     }
 
     // Remove 'selected' class from all sections
-    sections.forEach(s => {
+    currentPage.sections.forEach(s => {
         if (s && s.element) {
             s.element.classList.remove('selected');
         } else {
@@ -610,12 +681,12 @@ function selectSection(section, clickEvent = null) {
 
 // Delete a section
 function deleteSection(section) {
-    const index = sections.indexOf(section);
+    const index = currentPage.sections.indexOf(section);
     if (index > -1) {
-        sections.splice(index, 1);
+        currentPage.sections.splice(index, 1);
         sectionsContainer.removeChild(section.element);
-        if (sections.length > 0) {
-            selectSection(sections[0]);
+        if (currentPage.sections.length > 0) {
+            selectSection(currentPage.sections[0]);
         }
         updateCSS();
         saveCurrentState(); // Add this line
@@ -828,7 +899,7 @@ function addEventListeners() {
 
 // Modify the addSection function
 function addSection() {
-    const sectionName = `Section ${sections.length + 1}`;
+    const sectionName = `Section ${currentPage.sections.length + 1}`;
     const defaultColumns = getDefaultColumns(currentBreakpoint);
     const newSection = createSection(sectionName, defaultColumns, 6, `repeat(${defaultColumns}, 1fr)`, 'repeat(6, 1fr)', '1rem');
     
@@ -844,7 +915,7 @@ function addSection() {
         };
     });
 
-    sections.push(newSection);
+    currentPage.sections.push(newSection);
     sectionsContainer.appendChild(newSection.element);
     selectSection(newSection);
     updateSectionForBreakpoint(newSection, currentBreakpoint);
@@ -904,16 +975,16 @@ function updateSectionGap() {
 
 // Helper function to ensure areas exist for all breakpoints
 function ensureAreasForAllBreakpoints(section, area) {
-    const breakpoints = ['default', 'mobile-s', 'mobile-m', 'mobile-l', 'tablet', 'laptop'];
-    breakpoints.forEach(bp => {
-        if (!section.areas[bp]) {
-            section.areas[bp] = [];
+    const breakpointKeys = Object.keys(breakpoints);
+    breakpointKeys.forEach(breakpoint => {
+        if (!section.areas[breakpoint]) {
+            section.areas[breakpoint] = [];
         }
-        const existingAreaIndex = section.areas[bp].findIndex(a => a.name === area.name);
+        const existingAreaIndex = section.areas[breakpoint].findIndex(a => a.name === area.name);
         if (existingAreaIndex !== -1) {
-            section.areas[bp][existingAreaIndex] = area;
+            section.areas[breakpoint][existingAreaIndex] = area;
         } else {
-            section.areas[bp].push(area);
+            section.areas[breakpoint].push(area);
         }
     });
 }
@@ -932,6 +1003,23 @@ function addArea(section, startCell, endCell, name) {
 
     if (isNaN(startCol) || isNaN(startRow) || isNaN(endCol) || isNaN(endRow)) {
         console.error('Invalid grid coordinates');
+        return;
+    }
+
+    if (name.trim() === '') {
+        alert('Area name cannot be empty');
+        return;
+    }
+
+    // Ensure the areas object for the current breakpoint exists
+    if (!section.areas[currentBreakpoint]) {
+        section.areas[currentBreakpoint] = [];
+    }
+
+    // Check if the area name already exists
+    const existingArea = section.areas[currentBreakpoint].find(area => area.name === name);
+    if (existingArea) {
+        alert('An area with this name already exists. Please choose a different name.');
         return;
     }
 
@@ -1024,19 +1112,24 @@ function renameArea(event, section, areaElement) {
         const newName = input.value.trim();
         console.log('New name:', newName);
         if (newName && newName !== oldName) {
-            areaElement.textContent = newName;
-            
-            // Update the area name in the section's areas data for all breakpoints
-            for (let bp in section.areas) {
-                const areaData = section.areas[bp].find(a => a.name === oldName);
-                if (areaData) {
-                    areaData.name = newName;
+            if (section.areas[currentBreakpoint].some(area => area.name === newName)) {
+                alert('An area with this name already exists. Please choose a different name.');
+                areaElement.textContent = oldName;
+            } else {
+                areaElement.textContent = newName;
+                
+                // Update the area name in the section's areas data for all breakpoints
+                for (let bp in section.areas) {
+                    const areaData = section.areas[bp].find(a => a.name === oldName);
+                    if (areaData) {
+                        areaData.name = newName;
+                    }
                 }
+                
+                updateCSS();
+                saveState();
+                console.log('Area renamed successfully');
             }
-            
-            updateCSS();
-            saveState();
-            console.log('Area renamed successfully');
         } else {
             areaElement.textContent = oldName;
             console.log('Area name unchanged');
@@ -1154,44 +1247,45 @@ function updateCSS() {
 
     css += `#sections-container {\n  display: flex;\n  flex-direction: column;\n  gap: ${sectionGapInput.value};\n}\n\n`;
 
-    breakpointKeys.forEach((breakpoint, index) => {
-        const nextBreakpoint = breakpointKeys[index + 1];
-        let mediaQuery;
-        
-        if (nextBreakpoint) {
-            mediaQuery = `@media (max-width: ${breakpoints[breakpoint].width}px) {\n`;
-        } else {
-            // For the smallest breakpoint, we don't need a media query
-            mediaQuery = '';
-        }
-
-        let breakpointCSS = '';
-
-        sections.forEach((section) => {
-            const sectionClass = `.section-${section.name.replace(/\s+/g, '-').toLowerCase()}`;
-            breakpointCSS += `  ${sectionClass} {\n    display: grid;\n    grid-template-columns: ${section.columnSize};\n    grid-template-rows: ${section.rowSize};\n    gap: ${section.gap};\n`;
+    pages.forEach(page => {
+        breakpointKeys.forEach((breakpoint, index) => {
+            const nextBreakpoint = breakpointKeys[index + 1];
+            let mediaQuery;
             
-            // Generate grid-template-areas
-            const areas = section.areas[breakpoint] || section.areas['default'] || [];
-            if (areas.length > 0) {
-                const gridAreas = generateGridTemplateAreas(section.columns, section.rows, areas);
-                breakpointCSS += `    grid-template-areas:\n      ${gridAreas.join('\n      ')};\n`;
+            if (nextBreakpoint) {
+                mediaQuery = `@media (max-width: ${breakpoints[breakpoint].width}px) {\n`;
+            } else {
+                mediaQuery = '';
             }
-            
-            breakpointCSS += `  }\n\n`;
 
-            // Generate grid-area for each named area
-            areas.forEach(area => {
-                breakpointCSS += `  ${sectionClass} .${area.name} {\n    grid-area: ${area.name};\n  }\n\n`;
+            let breakpointCSS = '';
+
+            page.sections.forEach((section) => {
+                const sectionClass = `.section-${section.name.replace(/\s+/g, '-').toLowerCase()}`;
+                breakpointCSS += `  ${sectionClass} {\n    display: grid;\n    grid-template-columns: ${section.columnSize};\n    grid-template-rows: ${section.rowSize};\n    gap: ${section.gap};\n`;
+                
+                // Generate grid-template-areas
+                const areas = section.areas[breakpoint] || section.areas['default'] || [];
+                if (areas.length > 0) {
+                    const gridAreas = generateGridTemplateAreas(section.columns, section.rows, areas);
+                    breakpointCSS += `    grid-template-areas:\n      ${gridAreas.join('\n      ')};\n`;
+                }
+                
+                breakpointCSS += `  }\n\n`;
+
+                // Generate grid-area for each named area
+                areas.forEach(area => {
+                    breakpointCSS += `  ${sectionClass} .${area.name} {\n    grid-area: ${area.name};\n  }\n\n`;
+                });
             });
-        });
 
-        if (breakpointCSS) {
-            css += mediaQuery + breakpointCSS;
-            if (mediaQuery) {
-                css += '}\n\n';
+            if (breakpointCSS) {
+                css += mediaQuery + breakpointCSS;
+                if (mediaQuery) {
+                    css += '}\n\n';
+                }
             }
-        }
+        });
     });
 
     cssCode.textContent = css;
@@ -1245,24 +1339,30 @@ function deleteLayout(name) {
 // Load a saved layout
 function loadLayout(name) {
     if (layouts[name]) {
-        sections = JSON.parse(JSON.stringify(layouts[name]));
-        sectionsContainer.innerHTML = '';
-        sections = sections.map(sectionData => {
-            const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
-            section.areas = sectionData.areas || {};
-            sectionsContainer.appendChild(section.element);
-            createVisualGrid(section);
-            renderAreas(section);
-            return section;
-        });
-        if (sections.length > 0) {
-            selectSection(sections[0]);
-        } else {
-            console.warn("No sections found in the loaded layout");
+        try {
+            currentPage.sections = JSON.parse(JSON.stringify(layouts[name]));
+            sectionsContainer.innerHTML = '';
+            currentPage.sections = currentPage.sections.map(sectionData => {
+                const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
+                section.areas = sectionData.areas || {};
+                sectionsContainer.appendChild(section.element);
+                createVisualGrid(section);
+                renderAreas(section);
+                return section;
+            });
+            if (currentPage.sections.length > 0) {
+                selectSection(currentPage.sections[0]);
+            } else {
+                console.warn("No sections found in the loaded layout");
+            }
+            updateCSS();
+        } catch (error) {
+            console.error(`Error loading layout "${name}":`, error);
+            alert(`An error occurred while loading the layout. Please try again or contact support if the problem persists.`);
         }
-        updateCSS();
     } else {
         console.error(`Layout "${name}" not found`);
+        alert(`Layout "${name}" not found. Please check the layout name and try again.`);
     }
 }
 
@@ -1273,17 +1373,12 @@ function toggleTheme() {
 
 // Add this new function to set default columns based on breakpoint
 function getDefaultColumns(breakpoint) {
-    if (breakpoint.startsWith('mobile')) {
-        return 4;
-    } else if (breakpoint === 'tablet') {
-        return 6;
-    } else {
-        return 12;
-    }
+    return getDefaultProperties(breakpoint).columns;
 }
 
 // Ensure the changeBreakpoint function correctly updates the grid properties for the selected section
 function changeBreakpoint(breakpoint) {
+    const oldBreakpoint = currentBreakpoint;
     currentBreakpoint = breakpoint;
     
     const gridContainer = document.querySelector('.grid-container');
@@ -1296,6 +1391,9 @@ function changeBreakpoint(breakpoint) {
     
     const width = getBreakpointWidth(breakpoint);
     
+    // Add transition class
+    gridContainer.classList.add('transitioning');
+    
     if (width === 'flex-grow') {
         gridContainer.style.width = '100%';
         gridContainer.style.maxWidth = '100%';
@@ -1304,23 +1402,19 @@ function changeBreakpoint(breakpoint) {
         gridContainer.style.maxWidth = width;
     }
     
-    gridContainer.style.transition = 'width 0.3s ease-in-out, max-width 0.3s ease-in-out';
-    
     // Update areas for each section
-    sections.forEach(section => {
+    currentPage.sections.forEach(section => {
         if (!section.gridProperties[breakpoint]) {
-            // If no configuration exists for this breakpoint, create one with default columns
-            const defaultColumns = getDefaultColumns(breakpoint);
+            const defaultProps = getDefaultProperties(breakpoint);
             section.gridProperties[breakpoint] = {
-                columns: defaultColumns,
-                rows: section.gridProperties['default'].rows,
-                gap: section.gridProperties['default'].gap,
-                columnSize: `repeat(${defaultColumns}, 1fr)`,
-                rowSize: section.gridProperties['default'].rowSize
+                columns: defaultProps.columns,
+                rows: defaultProps.rows,
+                gap: defaultProps.gap,
+                columnSize: `repeat(${defaultProps.columns}, 1fr)`,
+                rowSize: `repeat(${defaultProps.rows}, 1fr)`
             };
         }
         if (!section.areas[breakpoint]) {
-            // Copy areas from default if they don't exist for this breakpoint
             section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
         }
         updateSectionForBreakpoint(section, breakpoint);
@@ -1332,27 +1426,33 @@ function changeBreakpoint(breakpoint) {
         updateSidebarControls(selectedSection);
     }
     
+    // Remove transition class after animation completes
     setTimeout(() => {
-        gridContainer.style.transition = '';
+        gridContainer.classList.remove('transitioning');
     }, 300);
     
     updateCSS();
+    
+    // Trigger a custom event for breakpoint change
+    const event = new CustomEvent('breakpointChanged', { 
+        detail: { oldBreakpoint, newBreakpoint: breakpoint } 
+    });
+    document.dispatchEvent(event);
 }
 
 // Ensure the updateSectionForBreakpoint function correctly updates the grid properties for the selected section
 function updateSectionForBreakpoint(section, breakpoint) {
     if (!section.gridProperties[breakpoint]) {
-        const defaultColumns = getDefaultColumns(breakpoint);
+        const defaultProps = getDefaultProperties(breakpoint);
         section.gridProperties[breakpoint] = {
-            columns: defaultColumns,
-            rows: section.gridProperties['default'].rows,
-            gap: section.gridProperties['default'].gap,
-            columnSize: `repeat(${defaultColumns}, 1fr)`,
-            rowSize: section.gridProperties['default'].rowSize
+            columns: defaultProps.columns,
+            rows: defaultProps.rows,
+            gap: defaultProps.gap,
+            columnSize: `repeat(${defaultProps.columns}, 1fr)`,
+            rowSize: `repeat(${defaultProps.rows}, 1fr)`
         };
     }
     if (!section.areas[breakpoint]) {
-        // Copy areas from default if they don't exist for this breakpoint
         section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
     }
 
@@ -1382,7 +1482,6 @@ function updateSectionForBreakpoint(section, breakpoint) {
 
 function updateAreasForBreakpoint(section, breakpoint) {
     if (!section.areas[breakpoint]) {
-        // If no configuration exists for this breakpoint, copy from default
         section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
     }
 
@@ -1406,6 +1505,7 @@ function createNamedArea(name, startCol, startRow, endCol, endRow, color) {
     const area = document.createElement('div');
     area.classList.add('named-area');
     area.textContent = name;
+    area.dataset.name = name; // Add this line
     area.style.gridColumnStart = startCol;
     area.style.gridColumnEnd = endCol + 1;
     area.style.gridRowStart = startRow;
@@ -1671,6 +1771,23 @@ function addArea(section, startCell, endCell, name) {
         return;
     }
 
+    if (name.trim() === '') {
+        alert('Area name cannot be empty');
+        return;
+    }
+
+    // Ensure the areas object for the current breakpoint exists
+    if (!section.areas[currentBreakpoint]) {
+        section.areas[currentBreakpoint] = [];
+    }
+
+    // Check if the area name already exists
+    const existingArea = section.areas[currentBreakpoint].find(area => area.name === name);
+    if (existingArea) {
+        alert('An area with this name already exists. Please choose a different name.');
+        return;
+    }
+
     const minCol = Math.min(startCol, endCol);
     const maxCol = Math.max(startCol, endCol);
     const minRow = Math.min(startRow, endRow);
@@ -1741,20 +1858,25 @@ function renameArea(event, section, areaElement) {
         const newName = input.value.trim();
         console.log('New name:', newName);
         if (newName && newName !== oldName) {
-            areaElement.textContent = newName;
-            
-            // Update the area name in the section's areas data for all breakpoints
-            for (let bp in section.areas) {
-                const areaData = section.areas[bp].find(a => a.name === oldName);
-                if (areaData) {
-                    areaData.name = newName;
+            if (section.areas[currentBreakpoint].some(area => area.name === newName)) {
+                alert('An area with this name already exists. Please choose a different name.');
+                areaElement.textContent = oldName;
+            } else {
+                areaElement.textContent = newName;
+                
+                // Update the area name in the section's areas data for all breakpoints
+                for (let bp in section.areas) {
+                    const areaData = section.areas[bp].find(a => a.name === oldName);
+                    if (areaData) {
+                        areaData.name = newName;
+                    }
                 }
+                
+                updateCSS();
+                saveState();
+                saveCurrentState(); // Add this line
+                console.log('Area renamed successfully');
             }
-            
-            updateCSS();
-            saveState();
-            saveCurrentState(); // Add this line
-            console.log('Area renamed successfully');
         } else {
             areaElement.textContent = oldName;
             console.log('Area name unchanged');
@@ -1796,10 +1918,15 @@ function updateSectionAreas(section, area) {
 
 function saveState() {
     const state = {
-        sections: sections.map(section => ({
-            ...section,
-            element: null // We don't want to store DOM elements
+        pages: pages.map(page => ({
+            id: page.id,
+            name: page.name,
+            sections: page.sections.map(section => ({
+                ...section,
+                element: null // We don't want to store DOM elements
+            }))
         })),
+        currentPageId: currentPage.id,
         customBreakpoints,
         currentBreakpoint
     };
@@ -1834,16 +1961,81 @@ function redo() {
     updateUndoRedoButtons();
 }
 
+
+
+
+function updateTabs() {
+    const tabsContainer = document.getElementById('page-tabs');
+    tabsContainer.innerHTML = '';
+
+    pages.forEach((page, index) => {
+        const tab = document.createElement('button');
+        tab.textContent = page.name;
+        tab.classList.add('page-tab');
+        if (page === currentPage) {
+            tab.classList.add('active');
+        }
+        tab.addEventListener('click', () => switchToPage(index));
+        tabsContainer.appendChild(tab);
+    });
+
+    const addPageTab = document.createElement('button');
+    addPageTab.textContent = '+';
+    addPageTab.classList.add('add-page-tab');
+    addPageTab.addEventListener('click', addNewPage);
+    tabsContainer.appendChild(addPageTab);
+}
+
+function switchToPage(pageIndex) {
+    currentPage = pages[pageIndex];
+    renderCurrentPage();
+    updateTabs();
+    updateCSS();
+}
+
+function addNewPage() {
+    const newPageName = prompt('Enter new page name:');
+    if (newPageName) {
+        const newPage = {
+            id: `page${pages.length + 1}`,
+            name: newPageName,
+            sections: []
+        };
+        pages.push(newPage);
+        currentPage = newPage;
+        renderCurrentPage();
+        updateTabs();
+        updateCSS();
+    }
+}
+
+function renderCurrentPage() {
+    sectionsContainer.innerHTML = '';
+    currentPage.sections.forEach(section => {
+        sectionsContainer.appendChild(section.element);
+        createVisualGrid(section);
+        renderAreas(section);
+    });
+    if (currentPage.sections.length > 0) {
+        selectSection(currentPage.sections[0]);
+    }
+}
+
+
 function loadState(state) {
     const parsedState = JSON.parse(state);
     
-    sections = parsedState.sections.map(sectionData => {
-        const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
-        section.areas = sectionData.areas;
-        section.currentBreakpoint = sectionData.currentBreakpoint;
-        return section;
-    });
+    pages = parsedState.pages.map(pageData => ({
+        ...pageData,
+        sections: pageData.sections.map(sectionData => {
+            const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
+            section.areas = sectionData.areas;
+            section.currentBreakpoint = sectionData.currentBreakpoint;
+            return section;
+        })
+    }));
     
+    currentPage = pages.find(page => page.id === parsedState.currentPageId);
     customBreakpoints = parsedState.customBreakpoints;
     currentBreakpoint = parsedState.currentBreakpoint;
     
@@ -1852,15 +2044,11 @@ function loadState(state) {
 }
 
 function rebuildUI() {
-    sectionsContainer.innerHTML = '';
-    sections.forEach(section => {
-        sectionsContainer.appendChild(section.element);
-        createVisualGrid(section);
-        renderAreas(section);
-    });
+    renderCurrentPage();
+    updateTabs();
     
-    if (sections.length > 0) {
-        selectSection(sections[0]);
+    if (currentPage.sections.length > 0) {
+        selectSection(currentPage.sections[0]);
     }
     
     updateCSS();
@@ -1873,12 +2061,13 @@ function updateUndoRedoButtons() {
 }
 
 function createNewLayout() {
-    sections = []; // Clear existing sections
+    currentPage.sections = []; // Clear existing sections
     sectionsContainer.innerHTML = '';
     createInitialSection(); // Create the initial section
     saveLayoutsToLocalStorage(); // Save the new layout
     localStorage.removeItem('currentGridState'); // Clear the current state
     saveCurrentState(); // Save the new initial state
+    updateSidebarControls(currentPage.sections[0]); // Update sidebar controls with the new section
 }
 
 // Add custom breakpoint
@@ -1902,7 +2091,7 @@ document.addEventListener('DOMContentLoaded', function() {
     init();
 });
 
-// Add this function to your script
+// Add this function to update the sidebar controls
 function updateSidebarControls(section) {
     if (!section) return;
     
@@ -1910,11 +2099,13 @@ function updateSidebarControls(section) {
     const rowsInput = document.getElementById('rows');
     const gapInput = document.getElementById('gap');
     
-    if (columnsInput) columnsInput.value = section.columns;
-    if (rowsInput) rowsInput.value = section.rows;
+    const currentProps = section.gridProperties[currentBreakpoint];
+    
+    if (columnsInput) columnsInput.value = currentProps.columns;
+    if (rowsInput) rowsInput.value = currentProps.rows;
     if (gapInput) {
-        const gapValue = parseFloat(section.gridProperties[currentBreakpoint].gap);
-        gapInput.value = isNaN(gapValue) ? 1 : gapValue; // Default to 1 if NaN
+        const gapValue = parseFloat(currentProps.gap);
+        gapInput.value = isNaN(gapValue) ? 1 : gapValue;
     }
 }
 
@@ -1956,12 +2147,22 @@ function addGridControlListeners() {
     }
 }
 
+// Add this function to validate input
+function validateInput(input, min, max, defaultValue) {
+    const value = parseInt(input.value);
+    if (isNaN(value) || value < min || value > max) {
+        input.value = defaultValue;
+        return defaultValue;
+    }
+    return value;
+}
+
 // Modify the updateGridProperties function
 function updateGridProperties() {
     if (!selectedSection) return;
 
-    const columns = parseInt(document.getElementById('columns').value);
-    const rows = parseInt(document.getElementById('rows').value);
+    const columns = validateInput(document.getElementById('columns'), 1, 24, 12);
+    const rows = validateInput(document.getElementById('rows'), 1, 24, 6);
     const gapValue = parseFloat(document.getElementById('gap').value);
     const gap = isNaN(gapValue) ? '1rem' : `${gapValue}rem`;
 
@@ -2009,6 +2210,7 @@ function updateGridProperties() {
 
 // Ensure the changeBreakpoint function correctly updates the grid properties for the selected section
 function changeBreakpoint(breakpoint) {
+    const oldBreakpoint = currentBreakpoint;
     currentBreakpoint = breakpoint;
     
     const gridContainer = document.querySelector('.grid-container');
@@ -2021,6 +2223,9 @@ function changeBreakpoint(breakpoint) {
     
     const width = getBreakpointWidth(breakpoint);
     
+    // Add transition class
+    gridContainer.classList.add('transitioning');
+    
     if (width === 'flex-grow') {
         gridContainer.style.width = '100%';
         gridContainer.style.maxWidth = '100%';
@@ -2029,55 +2234,59 @@ function changeBreakpoint(breakpoint) {
         gridContainer.style.maxWidth = width;
     }
     
-    gridContainer.style.transition = 'width 0.3s ease-in-out, max-width 0.3s ease-in-out';
-    
     // Update areas for each section
-    sections.forEach(section => {
-        if (!section.gridProperties[breakpoint]) {
-            // If no configuration exists for this breakpoint, create one with default columns
-            const defaultColumns = getDefaultColumns(breakpoint);
-            section.gridProperties[breakpoint] = {
-                columns: defaultColumns,
-                rows: section.gridProperties['default'].rows,
-                gap: section.gridProperties['default'].gap,
-                columnSize: `repeat(${defaultColumns}, 1fr)`,
-                rowSize: section.gridProperties['default'].rowSize
-            };
-        }
-        if (!section.areas[breakpoint]) {
-            // Copy areas from default if they don't exist for this breakpoint
-            section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
-        }
-        updateSectionForBreakpoint(section, breakpoint);
-        updateSectionGrid(section);
-        renderAreas(section);
+    pages.forEach(page => {
+        page.sections.forEach(section => {
+            if (!section.gridProperties[breakpoint]) {
+                const defaultProps = getDefaultProperties(breakpoint);
+                section.gridProperties[breakpoint] = {
+                    columns: defaultProps.columns,
+                    rows: defaultProps.rows,
+                    gap: defaultProps.gap,
+                    columnSize: `repeat(${defaultProps.columns}, 1fr)`,
+                    rowSize: `repeat(${defaultProps.rows}, 1fr)`
+                };
+            }
+            if (!section.areas[breakpoint]) {
+                section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
+            }
+            updateSectionForBreakpoint(section, breakpoint);
+            updateSectionGrid(section);
+            renderAreas(section);
+        });
     });
     
     if (selectedSection) {
         updateSidebarControls(selectedSection);
     }
     
+    // Remove transition class after animation completes
     setTimeout(() => {
-        gridContainer.style.transition = '';
+        gridContainer.classList.remove('transitioning');
     }, 300);
     
     updateCSS();
+    
+    // Trigger a custom event for breakpoint change
+    const event = new CustomEvent('breakpointChanged', { 
+        detail: { oldBreakpoint, newBreakpoint: breakpoint } 
+    });
+    document.dispatchEvent(event);
 }
 
 // Ensure the updateSectionForBreakpoint function correctly updates the grid properties for the selected section
 function updateSectionForBreakpoint(section, breakpoint) {
     if (!section.gridProperties[breakpoint]) {
-        const defaultColumns = getDefaultColumns(breakpoint);
+        const defaultProps = getDefaultProperties(breakpoint);
         section.gridProperties[breakpoint] = {
-            columns: defaultColumns,
-            rows: section.gridProperties['default'] ? section.gridProperties['default'].rows : 6,
-            gap: section.gridProperties['default'] ? section.gridProperties['default'].gap : '1rem',
-            columnSize: `repeat(${defaultColumns}, 1fr)`,
-            rowSize: section.gridProperties['default'] ? section.gridProperties['default'].rowSize : 'repeat(6, 1fr)'
+            columns: defaultProps.columns,
+            rows: defaultProps.rows,
+            gap: defaultProps.gap,
+            columnSize: `repeat(${defaultProps.columns}, 1fr)`,
+            rowSize: `repeat(${defaultProps.rows}, 1fr)`
         };
     }
     if (!section.areas[breakpoint]) {
-        // Copy areas from default if they don't exist for this breakpoint
         section.areas[breakpoint] = JSON.parse(JSON.stringify(section.areas['default'] || []));
     }
 
@@ -2112,16 +2321,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function saveCurrentState() {
     const state = {
-        sections: sections.map(section => ({
-            name: section.name,
-            columns: section.columns,
-            rows: section.rows,
-            columnSize: section.columnSize,
-            rowSize: section.rowSize,
-            gap: section.gap,
-            areas: section.areas,
-            gridProperties: section.gridProperties
+        pages: pages.map(page => ({
+            id: page.id,
+            name: page.name,
+            sections: page.sections.map(section => ({
+                name: section.name,
+                columns: section.columns,
+                rows: section.rows,
+                columnSize: section.columnSize,
+                rowSize: section.rowSize,
+                gap: section.gap,
+                areas: section.areas,
+                gridProperties: section.gridProperties
+            }))
         })),
+        currentPageId: currentPage.id,
         currentBreakpoint: currentBreakpoint
     };
     localStorage.setItem('currentGridState', JSON.stringify(state));
@@ -2130,24 +2344,39 @@ function saveCurrentState() {
 function loadCurrentState() {
     const savedState = localStorage.getItem('currentGridState');
     if (savedState) {
-        const state = JSON.parse(savedState);
-        sections = state.sections.map(sectionData => {
-            const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
-            section.areas = sectionData.areas;
-            section.gridProperties = sectionData.gridProperties || {
-                'default': {
-                    columns: sectionData.columns,
-                    rows: sectionData.rows,
-                    gap: sectionData.gap,
-                    columnSize: sectionData.columnSize,
-                    rowSize: sectionData.rowSize
-                }
-            };
-            return section;
-        });
-        currentBreakpoint = state.currentBreakpoint;
-        return true;
+        try {
+            const state = JSON.parse(savedState);
+            if (state && state.pages) {
+                pages = state.pages.map(pageData => ({
+                    id: pageData.id,
+                    name: pageData.name,
+                    sections: pageData.sections.map(sectionData => {
+                        const section = createSection(sectionData.name, sectionData.columns, sectionData.rows, sectionData.columnSize, sectionData.rowSize, sectionData.gap);
+                        section.areas = sectionData.areas;
+                        section.gridProperties = sectionData.gridProperties || {
+                            'default': {
+                                columns: sectionData.columns,
+                                rows: sectionData.rows,
+                                gap: sectionData.gap,
+                                columnSize: sectionData.columnSize,
+                                rowSize: sectionData.rowSize
+                            }
+                        };
+                        return section;
+                    })
+                }));
+                currentPage = pages.find(page => page.id === state.currentPageId) || pages[0];
+                currentBreakpoint = state.currentBreakpoint || 'desktop-large';
+                return true;
+            }
+        } catch (error) {
+            console.error('Error parsing saved state:', error);
+        }
     }
+    // If no valid state was loaded, initialize with default values
+    pages = [{ id: 'page1', name: 'Page 1', sections: [] }];
+    currentPage = pages[0];
+    currentBreakpoint = 'desktop-large';
     return false;
 }
 

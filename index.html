@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Grid Layout Generator</title>
+        <link rel="stylesheet" href="styles.css">
+        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
+    </head>
+    <body>
+        <header>
+            <h1>Grid Layout Generator</h1>
+            <div class="header-controls" data-pg-collapsed>
+                <div class="breakpoints">
+                    <!-- Breakpoint buttons will be dynamically added here -->
+                </div>
+            </div>
+            <button id="theme-toggle" class="tooltip">
+                Toggle Theme<span class="tooltiptext">Switch between light and dark themes</span>
+            </button>
+        </header>
+        <main>
+            <aside class="sidebar">
+                <div class="sidebar-section grid-controls">
+                    <h3>Grid Controls</h3>
+                    <div class="control-group" data-pg-collapsed>
+                        <label for="columns">Columns:</label>
+                        <div class="number-input">
+                            <button onclick="this.parentNode.querySelector('input[type=number]').stepDown(); updateGridProperties();"></button>
+                            <input class="quantity" min="1" max="24" name="columns" id="columns" value="12" type="number">
+                            <button onclick="this.parentNode.querySelector('input[type=number]').stepUp(); updateGridProperties();" class="plus"></button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="rows">Rows:</label>
+                        <div class="number-input">
+                            <button onclick="this.parentNode.querySelector('input[type=number]').stepDown(); updateGridProperties();"></button>
+                            <input class="quantity" min="1" name="rows" id="rows" value="6" type="number">
+                            <button onclick="this.parentNode.querySelector('input[type=number]').stepUp(); updateGridProperties();" class="plus"></button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="gap">Gap col/row:</label>
+                        <div class="number-input">
+                            <button onclick="decrementGap(this); updateGridProperties();"></button>
+                            <input class="quantity" min="0" step="0.5" name="gap" id="gap" value="1" type="number">
+                            <button onclick="incrementGap(this); updateGridProperties();" class="plus"></button>
+                        </div>
+                        <span>rem</span>
+                    </div>
+                    <div class="button-group hide">
+                        <button id="auto-columns" class="secondary-button">Auto Columns</button>
+                        <button id="auto-rows" class="secondary-button">Auto Rows</button>
+                    </div>
+                </div>
+                <div class="sidebar-section section-controls">
+                    <h3>Section Controls</h3>
+                    <button id="add-section-btn" class="primary-button">Add Section</button>
+                    <div class="control-group hide">
+                        <label for="section-gap">Section Gap:</label>
+                        <input type="text" id="section-gap" value="2rem">
+                    </div>
+                </div>
+            </aside>
+            <div class="main-grid-area">
+                <div class="grid-container">
+                    <div id="sections-container">
+                        <!-- Sections will be dynamically added here -->
+                    </div>
+                </div>
+            </div>
+            <aside class="sidebar" data-pg-collapsed>
+                <div class="sidebar-section" data-pg-collapsed>
+                    <button id="undo-btn" class="secondary-button">Undo</button>
+                    <button id="redo-btn" class="secondary-button">Redo</button>
+                </div>
+                <div class="sidebar-section predefined-layouts">
+                    <h3>Saved Layouts</h3>
+                    <div id="layout-thumbnails"></div>
+                </div>
+                <div class="sidebar-section layout-controls">
+                    <button id="new-layout-btn" class="secondary-button">New Layout</button>
+                    <input type="text" id="layout-name" placeholder="Layout Name">
+                    <div class="button-group">
+                        <button id="save-layout-btn" class="primary-button">Save Layout</button>
+                        <button id="delete-layout-btn" class="danger-button">Delete Layout</button>
+                    </div>
+                </div>
+                <div class="sidebar-section css-output">
+                    <h3>CSS Output</h3>
+                    <pre id="css-code"></pre>
+                    <button id="copy-css-btn" class="primary-button">Copy CSS</button>
+                </div>
+            </aside>
+        </main>
+        <script src="script.js"></script>
+    </body>
+</html>
